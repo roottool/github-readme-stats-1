@@ -45,8 +45,8 @@ const GRAPHQL_STATS_QUERY = `
       name
       login
       contributionsCollection {
-        totalCommitContributions
-        restrictedContributionsCount
+        totalCommitContributions,
+        totalPullRequestReviewContributions
       }
       repositoriesContributedTo(first: 1, contributionTypes: [COMMIT, ISSUE, PULL_REQUEST, REPOSITORY]) {
         totalCount
@@ -63,17 +63,27 @@ const GRAPHQL_STATS_QUERY = `
       followers {
         totalCount
       }
+      repositoryDiscussions {
+        totalCount
+      }
+      repositoryDiscussionComments(onlyAnswers: true) {
+        totalCount
+      }
       ${GRAPHQL_REPOS_FIELD}
     }
   }
 `;
 
 /**
+ * @typedef {import('axios').AxiosResponse} AxiosResponse Axios response.
+ */
+
+/**
  * Stats fetcher object.
  *
- * @param {import('axios').AxiosRequestHeaders} variables Fetcher variables.
+ * @param {object} variables Fetcher variables.
  * @param {string} token GitHub token.
- * @returns {Promise<import('../common/types').Fetcher>} Stats fetcher response.
+ * @returns {Promise<AxiosResponse>} Axios response.
  */
 const fetcher = (variables, token) => {
   const query = !variables.after ? GRAPHQL_STATS_QUERY : GRAPHQL_REPOS_QUERY;
@@ -92,7 +102,7 @@ const fetcher = (variables, token) => {
  * Fetch stats information for a given username.
  *
  * @param {string} username Github username.
- * @returns {Promise<import('../common/types').StatsFetcher>} GraphQL Stats object.
+ * @returns {Promise<AxiosResponse>} Axios response.
  *
  * @description This function supports multi-page fetching if the 'FETCH_MULTI_PAGE_STARS' environment variable is set to true.
  */
@@ -170,11 +180,16 @@ const totalCommitsFetcher = async (username) => {
 };
 
 /**
+ * @typedef {import("./types").StatsData} StatsData Stats data.
+ */
+
+/**
  * Fetch stats for a given username.
  *
  * @param {string} username GitHub username.
  * @param {boolean} include_all_commits Include all commits.
- * @returns {Promise<import("./types").StatsData>} Stats data.
+ * @param {string[]} exclude_repo Repositories to exclude.
+ * @returns {Promise<StatsData>} Stats data.
  */
 const fetchStats = async (
   username,
@@ -186,11 +201,14 @@ const fetchStats = async (
   const stats = {
     name: "",
     totalPRs: 0,
+    totalReviews: 0,
     totalCommits: 0,
     totalIssues: 0,
     totalStars: 0,
+    totalDiscussionsStarted: 0,
+    totalDiscussionsAnswered: 0,
     contributedTo: 0,
-    rank: { level: "B", score: 0 },
+    rank: { level: "C", percentile: 100 },
   };
 
   let res = await statsFetcher(username);
@@ -228,7 +246,11 @@ const fetchStats = async (
   }
 
   stats.totalPRs = user.pullRequests.totalCount;
+  stats.totalReviews =
+    user.contributionsCollection.totalPullRequestReviewContributions;
   stats.totalIssues = user.openIssues.totalCount + user.closedIssues.totalCount;
+  stats.totalDiscussionsStarted = user.repositoryDiscussions.totalCount;
+  stats.totalDiscussionsAnswered = user.repositoryDiscussionComments.totalCount;
   stats.contributedTo = user.repositoriesContributedTo.totalCount;
 
   // Retrieve stars while filtering out repositories to be hidden.
@@ -246,6 +268,7 @@ const fetchStats = async (
     all_commits: include_all_commits,
     commits: stats.totalCommits,
     prs: stats.totalPRs,
+    reviews: stats.totalReviews,
     issues: stats.totalIssues,
     repos: user.repositories.totalCount,
     stars: stats.totalStars,
